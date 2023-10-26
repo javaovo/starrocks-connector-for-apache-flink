@@ -18,6 +18,7 @@
 
 package com.starrocks.connector.flink.manager;
 
+import com.starrocks.data.load.stream.LabelGenerator;
 import com.starrocks.data.load.stream.StreamLoadDataFormat;
 import com.starrocks.data.load.stream.StreamLoadManager;
 import com.starrocks.data.load.stream.StreamLoadResponse;
@@ -260,7 +261,7 @@ public class TransactionTableRegion implements TableRegion {
                 }
             } catch (Exception e) {
                 LOG.error("TransactionTableRegion commit failed, db: {}, table: {}, label: {}", database, table, label, e);
-                callback(e);
+                fail(e);
                 return false;
             }
 
@@ -286,9 +287,9 @@ public class TransactionTableRegion implements TableRegion {
     }
 
     @Override
-    public void callback(Throwable e) {
-        manager.callback(e);
-    }
+	public void fail(Throwable e) {
+    	manager.callback(e);		
+	}
 
     @Override
     public void complete(StreamLoadResponse response) {
@@ -333,7 +334,7 @@ public class TransactionTableRegion implements TableRegion {
             flip();
             setResult(streamLoader.send(this));
         } catch (Exception e) {
-            callback(e);
+            fail(e);
         }
     }
 
@@ -382,4 +383,9 @@ public class TransactionTableRegion implements TableRegion {
     public boolean isReadable() {
         throw new UnsupportedOperationException();
     }
+
+	@Override
+	public LabelGenerator getLabelGenerator() {
+		throw new UnsupportedOperationException();
+	}
 }
