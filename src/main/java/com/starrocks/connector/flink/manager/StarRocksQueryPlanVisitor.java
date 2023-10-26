@@ -35,6 +35,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -49,10 +50,13 @@ public class StarRocksQueryPlanVisitor implements Serializable {
     private static final long serialVersionUID = 1L;
     private static final Logger LOG = LoggerFactory.getLogger(StarRocksQueryPlanVisitor.class);
     private StarRocksSourceOptions sourceOptions;
-
-    public StarRocksQueryPlanVisitor(StarRocksSourceOptions sourceOptions) {
-        this.sourceOptions = sourceOptions;
-    }
+    
+    private static final List<String> httpNodes = new ArrayList<>();
+ 
+	public StarRocksQueryPlanVisitor(StarRocksSourceOptions sourceOptions) {
+		this.sourceOptions = sourceOptions;
+		httpNodes.addAll(Arrays.asList(sourceOptions.getScanUrl().split(",")));
+	}
 
     public void setSourceOptions(StarRocksSourceOptions sourceOptions) {
         this.sourceOptions = sourceOptions;
@@ -60,8 +64,7 @@ public class StarRocksQueryPlanVisitor implements Serializable {
 
     public QueryInfo getQueryInfo(String SQL) throws IOException {
         LOG.info("query sql [{}]", SQL);
-        String[] httpNodes = sourceOptions.getScanUrl().split(",");
-        QueryPlan plan = getQueryPlan(SQL, httpNodes[new Random().nextInt(httpNodes.length)], sourceOptions);
+        QueryPlan plan = getQueryPlan(SQL, sourceOptions);
         Map<String, Set<Long>> beXTablets = transferQueryPlanToBeXTablet(plan);
         List<QueryBeXTablets> queryBeXTabletsList = new ArrayList<>();
         beXTablets.entrySet().stream().forEach(entry -> {
@@ -91,16 +94,8 @@ public class StarRocksQueryPlanVisitor implements Serializable {
         });
         return beXTablets;
     }
-
-    private static QueryPlan getQueryPlan(String querySQL, String httpNode, StarRocksSourceOptions sourceOptions) throws IOException {
-        String url = new StringBuilder("http://")
-            .append(httpNode)
-            .append("/api/")
-            .append(sourceOptions.getDatabaseName())
-            .append("/")
-            .append(sourceOptions.getTableName())
-            .append("/_query_plan")
-            .toString();
+    
+    private static QueryPlan getQueryPlan(String querySQL, StarRocksSourceOptions sourceOptions) throws IOException {       
 
         Map<String, Object> bodyMap = new HashMap<>();
         bodyMap.put("sql", querySQL);
@@ -108,6 +103,19 @@ public class StarRocksQueryPlanVisitor implements Serializable {
         int requsetCode = 0;
         String respString = "";
         for (int i = 0; i < sourceOptions.getScanMaxRetries(); i ++) {
+			if (httpNodes.isEmpty()) {
+				throw new RuntimeException("HttpNodes all not available! Please check!");
+			}
+        	String httpNode = httpNodes.get(new Random().nextInt(httpNodes.size()));        	
+        	String url = new StringBuilder("http://")
+            .append(httpNode)
+            .append("/api/")
+            .append(sourceOptions.getDatabaseName())
+            .append("/")
+            .append(sourceOptions.getTableName())
+            .append("/_query_plan")
+            .toString();
+        	
             try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
                 HttpPost post = new HttpPost(url);
                 post.setHeader("Content-Type", "application/json;charset=UTF-8");
@@ -118,7 +126,13 @@ public class StarRocksQueryPlanVisitor implements Serializable {
                     HttpEntity respEntity = response.getEntity();
                     respString = EntityUtils.toString(respEntity, "UTF-8");
                 }
-            }
+			} catch (IOException e) {
+				LOG.warn("Request failed at " + httpNode, e);
+				if (httpNodes.size() > 1) {
+					httpNodes.remove(httpNode);
+				}
+			}          
+            
             if (200 == requsetCode || i == sourceOptions.getScanMaxRetries() - 1) {
                 break;
             }
